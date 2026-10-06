@@ -1,0 +1,87 @@
+name: qemu-tool-action - CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.1
+
+      - name: shellcheck
+        run: shellcheck -S error scripts/*.sh
+
+      - name: Validate action.yml is parseable YAML
+        run: python3 -c "import yaml, sys; yaml.safe_load(open('action.yml'))" && echo "action.yml OK"
+
+  dry-run:
+    name: Dry-run smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the action itself
+        uses: actions/checkout@v4.3.1
+        with:
+          path: qemu-tool-action
+
+      - name: Check out qemu-minimal (source of qemu-tool)
+        uses: actions/checkout@v4.3.1
+        with:
+          repository: sbates130272/qemu-minimal
+          path: qemu-minimal
+
+      - name: run-vm dry-run via action
+        id: run_vm
+        uses: ./qemu-tool-action
+        with:
+          operation: run-vm
+          qemu-tool-source: ./qemu-minimal/qemu
+          vm-name: ci-test
+          ssh-port: '2222'
+          extra-args: --dry-run --no-kvm
+
+      - name: Verify vm-manifest output
+        run: |
+          echo "Manifest: ${{ steps.run_vm.outputs.vm-manifest }}"
+          echo '${{ steps.run_vm.outputs.vm-manifest }}' | python3 -c "
+          import json, sys
+          m = json.load(sys.stdin)
+          assert len(m) == 1, f'expected 1 entry, got: {m}'
+          assert m[0]['name'] == 'ci-test', m
+          assert m[0]['ssh_port'] == 2222, m
+          assert m[0]['image_path'] is None, m
+          print('vm-manifest OK')
+          "
+
+      - name: gen-vm dry-run via action (--dry-run in extra-args is not valid for gen-vm, use run-vm)
+        id: gen_vm
+        uses: ./qemu-tool-action
+        with:
+          operation: run-vm
+          qemu-tool-source: ./qemu-minimal/qemu
+          vm-name: ci-gen-test
+          ssh-port: '2333'
+          arch: amd64
+          vcpus: '4'
+          vmem: '8192'
+          extra-args: --dry-run --no-kvm
+
+      - name: Verify gen-vm manifest shape
+        run: |
+          echo "Manifest: ${{ steps.gen_vm.outputs.vm-manifest }}"
+          echo '${{ steps.gen_vm.outputs.vm-manifest }}' | python3 -c "
+          import json, sys
+          m = json.load(sys.stdin)
+          assert m[0]['name'] == 'ci-gen-test', m
+          assert m[0]['ssh_port'] == 2333, m
+          print('gen-vm manifest shape OK')
+          "

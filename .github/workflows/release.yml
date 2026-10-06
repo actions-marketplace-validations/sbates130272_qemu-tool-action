@@ -1,0 +1,28 @@
+name: qemu-tool-action - Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+
+  update-floating-tags:
+    name: Update floating tags
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4.3.1
+
+      - name: Move v1.x and v1 alias tags to this commit
+        run: |
+          TAG="${GITHUB_REF_NAME}"      # e.g. v1.2.3
+          MAJOR="${TAG%%.*}"            # v1
+          MINOR="${TAG%.*}"             # v1.2
+          echo "Releasing $TAG → aliases $MAJOR and $MINOR"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$MAJOR" -m "Track $TAG"
+          git tag -fa "$MINOR" -m "Track $TAG"
+          git push origin "$MAJOR" "$MINOR" --force

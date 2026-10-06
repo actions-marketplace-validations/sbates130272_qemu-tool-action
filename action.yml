@@ -1,0 +1,240 @@
+name: qemu-tool
+description: >-
+  Orchestrate qemu-tool gen-vm, run-vm, compose, or gen-compose inside a
+  GitHub Actions job. Installs qemu-tool, optionally loads an env-file, runs
+  the requested operation, and emits a vm-manifest JSON array describing every
+  VM in the resulting cluster.
+
+branding:
+  icon: cpu
+  color: orange
+
+inputs:
+  operation:
+    description: 'Subcommand to run: gen-vm, run-vm, compose, or gen-compose'
+    required: true
+
+  env-file:
+    description: >-
+      Path to a qemu-tool env-file (KEY=VALUE pairs). All non-system variables
+      are exported to $GITHUB_ENV before the subcommand runs, making them
+      available to subsequent steps too. This is the primary mechanism for
+      multi-VM compose stacks (VM1_NAME, VM2_NAME, VM_NAMES, VM_SSH_PORTS, …).
+    required: false
+
+  vm-name:
+    description: VM name passed as --vm-name. Used for single-VM operations.
+    required: false
+    default: qemu-minimal
+
+  arch:
+    description: 'Target architecture: amd64, arm64, or riscv64'
+    required: false
+    default: amd64
+
+  vcpus:
+    description: Number of vCPUs (--vcpus). Omitted from the command when not set.
+    required: false
+
+  vmem:
+    description: Guest memory in MiB (--vmem). Omitted from the command when not set.
+    required: false
+
+  images-dir:
+    description: Directory qemu-tool reads and writes VM images.
+    required: false
+    default: /var/lib/qemu-tool/images
+
+  ssh-port:
+    description: Host-side SSH port forwarded to guest port 22 (--ssh-port).
+    required: false
+    default: '2222'
+
+  release:
+    description: Ubuntu release codename for gen-vm (--release).
+    required: false
+    default: resolute
+
+  size:
+    description: Disk size in GB for gen-vm (--size). Omitted when not set.
+    required: false
+
+  packages:
+    description: Packages manifest name or path for gen-vm (--packages). Omitted when not set.
+    required: false
+
+  backing-image:
+    description: OCI reference for gen-vm --backing-image. Omitted when not set.
+    required: false
+
+  backing-file:
+    description: Local path to an existing qcow2 for gen-vm --backing-file. Omitted when not set.
+    required: false
+
+  ansible-playbook:
+    description: Ansible playbook path for gen-vm --ansible-playbook. Omitted when not set.
+    required: false
+
+  stack:
+    description: Compose stack name for compose and gen-compose (--stack).
+    required: false
+    default: vfio-user-ernic-rocjitsu-vm
+
+  compose-args:
+    description: >-
+      Extra arguments passed verbatim after the compose subcommand (word-split).
+      Example: "up --detach --no-deps ernic rocjitsu".
+    required: false
+
+  compose-profiles:
+    description: >-
+      Comma-separated Docker Compose profiles to enable. Translates to
+      --profile PROFILE for each entry, placed after the "--" separator that
+      separates qemu-tool flags from docker compose flags.
+      Example: "rocjitsu-vm1,rocjitsu-vm2".
+    required: false
+
+  wait-for-healthy:
+    description: >-
+      When true and operation is compose, poll all services until they report
+      healthy or wait-timeout seconds elapse.
+    required: false
+    default: 'false'
+
+  wait-timeout:
+    description: Seconds to wait when wait-for-healthy is true.
+    required: false
+    default: '120'
+
+  extra-args:
+    description: >-
+      Additional CLI flags appended verbatim (word-split) to the end of the
+      qemu-tool command. Use for flags not exposed as dedicated inputs, e.g.
+      "--dry-run --no-kvm" or "--restore-image".
+    required: false
+
+  qemu-tool-source:
+    description: >-
+      Path to a qemu-tool source checkout to install from (pip install -e).
+      When set, qemu-tool-version is ignored. Pass ./qemu when calling from
+      a qemu-minimal checkout to use the in-repo version.
+    required: false
+
+  qemu-tool-version:
+    description: >-
+      PyPI version to install when qemu-tool-source is not set. Use "latest"
+      (the default) for no version pin, or a specific version like "1.4.1".
+    required: false
+    default: latest
+
+outputs:
+  vm-manifest:
+    description: >-
+      JSON array of VM descriptors, one entry per VM:
+      [{"name":"vm1","ssh_port":2222,"image_path":"/path/to/vm1.qcow2"}, ...].
+      image_path is null for run-vm (no image created). Empty array [] for
+      gen-compose. SSH ports and VM names for multi-VM compose stacks are
+      derived from env-file variables (VM1_NAME/VM2_NAME/VM_NAMES/VM_SSH_PORTS).
+    value: ${{ steps.capture-outputs.outputs.vm-manifest }}
+
+runs:
+  using: composite
+  steps:
+
+    # ------------------------------------------------------------------ #
+    # 1. Install qemu-tool                                                 #
+    # ------------------------------------------------------------------ #
+    - name: Install qemu-tool from source
+      if: inputs.qemu-tool-source != ''
+      shell: bash
+      run: |
+        echo "::group::Install qemu-tool (source: ${{ inputs.qemu-tool-source }})"
+        pip install --break-system-packages -e "${{ inputs.qemu-tool-source }}"
+        echo "::endgroup::"
+
+    - name: Install qemu-tool from PyPI
+      if: inputs.qemu-tool-source == ''
+      shell: bash
+      run: |
+        echo "::group::Install qemu-tool (${{ inputs.qemu-tool-version }})"
+        if [ "${{ inputs.qemu-tool-version }}" = "latest" ]; then
+          pip install --break-system-packages qemu-tool
+        else
+          pip install --break-system-packages "qemu-tool==${{ inputs.qemu-tool-version }}"
+        fi
+        echo "::endgroup::"
+
+    # ------------------------------------------------------------------ #
+    # 2. Load env-file (before images-dir so VM_IMAGES_DIR can override)  #
+    # ------------------------------------------------------------------ #
+    - name: Load env-file
+      if: inputs.env-file != ''
+      shell: bash
+      run: |
+        echo "::group::Load env-file: ${{ inputs.env-file }}"
+        "${{ github.action_path }}/scripts/load-env-file.sh" "${{ inputs.env-file }}"
+        echo "::endgroup::"
+
+    # ------------------------------------------------------------------ #
+    # 3. Ensure images directory exists                                    #
+    # ------------------------------------------------------------------ #
+    - name: Ensure images directory exists
+      shell: bash
+      run: mkdir -p "${{ inputs.images-dir }}" && chmod 777 "${{ inputs.images-dir }}"
+
+    # ------------------------------------------------------------------ #
+    # 4. Run the qemu-tool operation                                       #
+    # ------------------------------------------------------------------ #
+    - name: Run qemu-tool ${{ inputs.operation }}
+      id: run-operation
+      shell: bash
+      run: |
+        echo "::group::qemu-tool ${{ inputs.operation }}"
+        "${{ github.action_path }}/scripts/build-command.sh"
+        echo "::endgroup::"
+      env:
+        QT_OPERATION:        ${{ inputs.operation }}
+        QT_VM_NAME:          ${{ inputs.vm-name }}
+        QT_ARCH:             ${{ inputs.arch }}
+        QT_VCPUS:            ${{ inputs.vcpus }}
+        QT_VMEM:             ${{ inputs.vmem }}
+        QT_IMAGES_DIR:       ${{ inputs.images-dir }}
+        QT_SSH_PORT:         ${{ inputs.ssh-port }}
+        QT_RELEASE:          ${{ inputs.release }}
+        QT_SIZE:             ${{ inputs.size }}
+        QT_PACKAGES:         ${{ inputs.packages }}
+        QT_BACKING_IMAGE:    ${{ inputs.backing-image }}
+        QT_BACKING_FILE:     ${{ inputs.backing-file }}
+        QT_ANSIBLE_PLAYBOOK: ${{ inputs.ansible-playbook }}
+        QT_STACK:            ${{ inputs.stack }}
+        QT_COMPOSE_ARGS:     ${{ inputs.compose-args }}
+        QT_COMPOSE_PROFILES: ${{ inputs.compose-profiles }}
+        QT_EXTRA_ARGS:       ${{ inputs.extra-args }}
+
+    # ------------------------------------------------------------------ #
+    # 5. Wait for compose health (optional)                                #
+    # ------------------------------------------------------------------ #
+    - name: Wait for compose services healthy
+      if: inputs.operation == 'compose' && inputs.wait-for-healthy == 'true'
+      shell: bash
+      run: |
+        echo "::group::Wait for healthy (timeout ${{ inputs.wait-timeout }}s)"
+        "${{ github.action_path }}/scripts/wait-healthy.sh" \
+          "${{ inputs.stack }}" "${{ inputs.wait-timeout }}"
+        echo "::endgroup::"
+
+    # ------------------------------------------------------------------ #
+    # 6. Capture outputs — runs even on failure so callers can inspect     #
+    # ------------------------------------------------------------------ #
+    - name: Capture outputs
+      id: capture-outputs
+      if: always()
+      shell: bash
+      run: |
+        "${{ github.action_path }}/scripts/capture-outputs.sh"
+      env:
+        QT_OPERATION:  ${{ inputs.operation }}
+        QT_VM_NAME:    ${{ inputs.vm-name }}
+        QT_SSH_PORT:   ${{ inputs.ssh-port }}
+        QT_IMAGES_DIR: ${{ inputs.images-dir }}
+        QT_STACK:      ${{ inputs.stack }}
