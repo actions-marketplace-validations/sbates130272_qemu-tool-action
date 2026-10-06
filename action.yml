@@ -1,9 +1,7 @@
 name: qemu-tool
 description: >-
-  Orchestrate qemu-tool gen-vm, run-vm, compose, or gen-compose inside a
-  GitHub Actions job. Installs qemu-tool, optionally loads an env-file, runs
-  the requested operation, and emits a vm-manifest JSON array describing every
-  VM in the resulting cluster.
+  Orchestrate qemu-tool gen-vm, run-vm, compose, and gen-compose operations
+  inside a GitHub Actions job.
 
 branding:
   icon: cpu
