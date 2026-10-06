@@ -257,18 +257,21 @@ runs:
             CMD+=(--vm-name "$QT_VM_NAME")
             CMD+=(--images  "$QT_IMAGES_DIR")
             CMD+=(--stack   "$QT_STACK")
-            PASSTHROUGH=()
+            # Profile flags start with -- so they must come after the -- separator
+            # to avoid being parsed as qemu-tool options. Compose subcommand args
+            # (up, down, ps, …) must NOT have -- before them: docker compose uses
+            # cobra, which only routes subcommands that appear before --, not after.
             if [ -n "$QT_COMPOSE_PROFILES" ]; then
+              CMD+=(--) # end of qemu-tool flags; docker compose processes what follows
               IFS=',' read -ra PROFILES <<< "$QT_COMPOSE_PROFILES"
               for p in "${PROFILES[@]}"; do
-                PASSTHROUGH+=(--profile "$p")
+                CMD+=(--profile "$p")
               done
             fi
             if [ -n "$QT_COMPOSE_ARGS" ]; then
               read -ra COMPOSE_PASS <<< "$QT_COMPOSE_ARGS"
-              PASSTHROUGH+=("${COMPOSE_PASS[@]}")
+              CMD+=("${COMPOSE_PASS[@]}")
             fi
-            [ "${#PASSTHROUGH[@]}" -gt 0 ] && CMD+=(-- "${PASSTHROUGH[@]}")
             ;;
           gen-compose)
             CMD+=(--stack "$QT_STACK")
