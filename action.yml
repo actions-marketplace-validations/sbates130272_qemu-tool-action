@@ -312,14 +312,14 @@ runs:
           for svc in $services; do
             health=$(qemu-tool compose --stack "$STACK" ps --format json "$svc" \
               | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-if isinstance(data, list):
-    healths = [d.get('Health', '') for d in data]
-    print('healthy' if healths and all(h == 'healthy' for h in healths) else (healths[0] if healths else 'unknown'))
-else:
-    print(data.get('Health', 'unknown'))
-" 2>/dev/null || echo "unknown")
+        import sys, json
+        data = json.load(sys.stdin)
+        if isinstance(data, list):
+            healths = [d.get('Health', '') for d in data]
+            print('healthy' if healths and all(h == 'healthy' for h in healths) else (healths[0] if healths else 'unknown'))
+        else:
+            print(data.get('Health', 'unknown'))
+        " 2>/dev/null || echo "unknown")
             printf "  %-20s %s\n" "$svc" "$health"
             [ "$health" = "healthy" ] || all_healthy=false
           done
