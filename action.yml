@@ -317,11 +317,16 @@ runs:
               | python3 -c "
         import sys, json
         data = json.load(sys.stdin)
+        def classify(h):
+            # Empty string means no healthcheck defined; treat as healthy so
+            # services without a healthcheck (e.g. the qemu container) do not
+            # block the wait loop.
+            return 'healthy' if h in ('', 'healthy') else h
         if isinstance(data, list):
-            healths = [d.get('Health', '') for d in data]
+            healths = [classify(d.get('Health', '')) for d in data]
             print('healthy' if healths and all(h == 'healthy' for h in healths) else (healths[0] if healths else 'unknown'))
         else:
-            print(data.get('Health', 'unknown'))
+            print(classify(data.get('Health', '')))
         " 2>/dev/null || echo "unknown")
             printf "  %-20s %s\n" "$svc" "$health"
             [ "$health" = "healthy" ] || all_healthy=false
